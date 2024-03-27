@@ -12,8 +12,7 @@ class MPU6050_Attitude {
     float tau = 0.98; // complementary filter weight
     float LPF = 1; 
 
-    float freq = 250; // Hz
-    float dt = 1/250; // sec
+    float dt; // sec
 
     float p; // rad/s
     float q; // rad/s
@@ -102,6 +101,7 @@ class MPU6050_Attitude {
         // no need to update
         return;
       }
+      this->dt = new_attitudeLoopTimer - this->attitudeLoopTimer; // update time step (curr time called - last time called)
       this->attitudeLoopTimer = new_attitudeLoopTimer; // update the time last attitude was updated
       this->read_gyro_acc();
       float p = this->p;
@@ -169,6 +169,11 @@ class MPU6050_Attitude {
       this->gyro_x_cal = gyro_x_cal;
       this->gyro_y_cal = gyro_y_cal;
       this->gyro_z_cal = gyro_z_cal;
+    }
+
+    bool isAttitudeConditionSatisfied() {
+      if () {}
+      return 
     }
 
 };
