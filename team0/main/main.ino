@@ -37,7 +37,7 @@
 typedef struct sensorValues { // define struct to save the newest collected data from sensors
   float roll_deg; // deg
   float pitch_deg; // deg
-  float ambient_pressure_atm; // atm
+  float ambient_pressure_hpa; // atm
   float longitude_deg; // deg
   float latitude_deg; // deg
   bool servo_triggered; // 1 if triggered, 0 otherwise.
@@ -161,7 +161,7 @@ void loop() {
     // BMP280, pressure, 5Hz
     sensors_event_t pressure_event;
     bmp_pressure->getEvent(&pressure_event);
-    myRocketState.ambient_pressure_atm = pressure_event.pressure / 1013.25; // convert to atm unit
+    myRocketState.ambient_pressure_hpa = pressure_event.pressure; // hpa
 
     // Send collected data to computer by Serial
     myRocketState.servo_triggered = servo_triggered;
@@ -351,8 +351,8 @@ void sendToPC(State* pData) {
   Serial.print(" deg, ");
 
   Serial.print(" Atm: ");
-  Serial.print(pData->ambient_pressure_atm);
-  Serial.print(" atm, ");
+  Serial.print(pData->ambient_pressure_hpa);
+  Serial.print(" hpa, ");
 
   Serial.print("ServoPos: ");
   Serial.print(pData->servo_triggered);
