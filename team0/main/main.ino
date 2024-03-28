@@ -4,7 +4,8 @@
 #include <Servo.h>
 #include <SoftwareSerial.h>
 #include <TinyGPS.h>
-// #include <SD.h>
+#include <SD.h>
+#include <EEPROM.h>
 
 #define MICRO_SD_CS 10
 #define SOFTWARE_SERIAL_RX 4 // need to be connected to TX of GPS module
@@ -13,6 +14,8 @@
 
 #define SERVO_ORIGINAL_POS 0
 #define SERVO_TRIGGERED_POS 90
+
+#define BOOTUP_COUNTER_ADDR 0
 
 // Arduino Pin Connection Description
 
@@ -37,7 +40,7 @@
 typedef struct sensorValues { // define struct to save the newest collected data from sensors
   float roll_deg; // deg
   float pitch_deg; // deg
-  float ambient_pressure_hpa; // atm
+  float ambient_pressure_hpa; // hpa
   float longitude_deg; // deg
   float latitude_deg; // deg
   bool servo_triggered; // 1 if triggered, 0 otherwise.
@@ -53,9 +56,10 @@ uint32_t prevLoopTimer, currLoopTimer;
 float KalmanAngleRoll=0, KalmanUncertaintyAngleRoll=2*2;
 float KalmanAnglePitch=0, KalmanUncertaintyAnglePitch=2*2;
 float Kalman1DOutput[]={0,0};
+float dt = 0.004;
 void kalman_1d(float KalmanState, float KalmanUncertainty, float KalmanInput, float KalmanMeasurement) {
-  KalmanState=KalmanState+0.004*KalmanInput;
-  KalmanUncertainty=KalmanUncertainty + 0.004 * 0.004 * 4 * 4;
+  KalmanState=KalmanState+dt*KalmanInput;
+  KalmanUncertainty=KalmanUncertainty + dt * dt * 4 * 4;
   float KalmanGain=KalmanUncertainty * 1/(1*KalmanUncertainty + 3 * 3);
   KalmanState=KalmanState+KalmanGain * (KalmanMeasurement-KalmanState);
   KalmanUncertainty=(1-KalmanGain) * KalmanUncertainty;
@@ -110,7 +114,8 @@ TinyGPS gps;
 Servo myservo;  // create Servo object to control a servo
 
 // SD card file
-// File myFile;
+File myFile;
+String filename;
 
 // timer variables
 uint32_t prevTime5HzCounter;
@@ -121,12 +126,17 @@ uint32_t currTime1HzCounter;
 void setup() {
   // Serial.begin(115200);
   //Serial.println("test");
+  // update boot up counter
+  uint8_t bootup_counter = EEPROM.read(BOOTUP_COUNTER_ADDR);
+  EEPROM.update(BOOTUP_COUNTER_ADDR, bootup_counter+1);
   testSerialCommunication();
+  //Serial.println(bootup_counter);
   initializeIMU(&RateCalibrationRoll, &RateCalibrationPitch);
   initializeBMP280();
   initializeGPS();
   initializeServo();
-  //initializeSD();
+  initializeSD(bootup_counter);
+  delay(2000);
   prevTime5HzCounter = millis();
   prevTime1HzCounter = millis();
 }
@@ -147,7 +157,7 @@ void loop() {
   currTime5HzCounter = currTime;
   currTime1HzCounter = currTime;
 
-  if (currTime5HzCounter - prevTime5HzCounter > 100) { // if 0.2 sec has passed since the last reading
+  if (currTime5HzCounter - prevTime5HzCounter > 200) { // if 0.2 sec has passed since the last reading
     prevTime5HzCounter = currTime5HzCounter; // update timer
 
     // State Variable
@@ -171,7 +181,7 @@ void loop() {
     sendToPC(&myRocketState);
 
     // Save collected data to 'log.dat' file
-    //saveToSD(&myRocketState);
+    saveToSD(&myRocketState);
 
   }
 
@@ -187,7 +197,7 @@ void loop() {
 void testSerialCommunication() {
   Serial.begin(9600);
   while ( !Serial ) delay(100);   // wait for native usb
-  Serial.println("PC Serial Communication Test Done!");
+  Serial.println(F("PC Serial Communication Test Done!"));
 }
 
 void initializeIMU(float* RateCalibrationRoll, float* RateCalibrationPitch) {
@@ -198,7 +208,7 @@ void initializeIMU(float* RateCalibrationRoll, float* RateCalibrationPitch) {
   Wire.write(0x6B);
   Wire.write(0x00);
   Wire.endTransmission();
-  Serial.print("IMU Calibration");
+  Serial.print(F("IMU Calibration"));
   
   float RateCalRoll = 0; 
   float RateCalPitch = 0;
@@ -209,7 +219,7 @@ void initializeIMU(float* RateCalibrationRoll, float* RateCalibrationPitch) {
     RateCalRoll+=RateRoll;
     RateCalPitch+=RatePitch;
     delay(1);
-    if (i % 100 == 0) Serial.print(".");
+    if (i % 100 == 0) Serial.print(F("."));
   }
   Serial.println();
   RateCalRoll/=2000;
@@ -223,7 +233,10 @@ void initializeIMU(float* RateCalibrationRoll, float* RateCalibrationPitch) {
 
 void updateIMUstate() {
   currLoopTimer = micros();
-  if (currLoopTimer - prevLoopTimer < 4000) return;
+  // if (currLoopTimer - prevLoopTimer < 4000) return;
+  dt = (currLoopTimer - prevLoopTimer);
+  //Serial.println(dt);
+  dt /= 1000000;
 
   prevLoopTimer = currLoopTimer;
   float RateRoll, RatePitch, AngleRoll, AnglePitch;
@@ -243,18 +256,17 @@ void updateIMUstate() {
 }
 
 void initializeBMP280() {
-  Serial.print("Initializing BMP...");
+  Serial.print(F("Initializing BMP..."));
   unsigned status;
   //status = bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID);
-  status = bmp.begin();
+  status = bmp.begin(0x76);
   if (!status) {
-    Serial.println(F("Could not find a valid BMP280 sensor, check wiring or "
-                      "try a different address!"));
-    Serial.print("SensorID was: 0x"); Serial.println(bmp.sensorID(),16);
-    Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
-    Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
-    Serial.print("        ID of 0x60 represents a BME 280.\n");
-    Serial.print("        ID of 0x61 represents a BME 680.\n");
+    Serial.println(F("Could not find a valid BMP280 sensor, check wiring or try a different address!"));
+    Serial.print(F("SensorID was: 0x")); Serial.println(bmp.sensorID(),16);
+    Serial.print(F("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n"));
+    Serial.print(F("   ID of 0x56-0x58 represents a BMP 280,\n"));
+    Serial.print(F("        ID of 0x60 represents a BME 280.\n"));
+    Serial.print(F("        ID of 0x61 represents a BME 680.\n"));
     while (1) delay(10);
   }
 
@@ -265,17 +277,17 @@ void initializeBMP280() {
                   Adafruit_BMP280::FILTER_X16,      /* Filtering. */
                   Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
 
-  Serial.println("BMP initialization Done!");
+  Serial.println(F("BMP initialization Done!"));
 }
 
 void initializeGPS() {
-  Serial.print("Initializing GPS...");
+  Serial.print(F("Initializing GPS..."));
   // ss.begin(9600);
-  Serial.println("GPS initialization Done!");
+  Serial.println(F("GPS initialization Done!"));
 }
 
 void initializeServo() {
-  Serial.print("Initializing Servo...");
+  Serial.print(F("Initializing Servo..."));
   myservo.attach(SERVO_PWM);  // attaches the servo on pin 9 to the Servo object
   for (int pos = 0; pos <= 180; pos += 1) { // goes from 0 degrees to 180 degrees
     // in steps of 1 degree
@@ -286,19 +298,22 @@ void initializeServo() {
     myservo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(15);                       // waits 15 ms for the servo to reach the position
   }
-  Serial.println("Servo initialization Done!");
+  Serial.println(F("Servo initialization Done!"));
 }
 
-// void initializeSD() {
-//   Serial.print("Initializing SD card...");
+void initializeSD(uint8_t bootup_counter) {
+  Serial.print(F("Initializing SD card..."));
 
-//   if (!SD.begin(MICRO_SD_CS)) {
-//     Serial.println("initialization failed!");
-//     while (1);
-//   }
-//   myFile = SD.open("log.data", FILE_WRITE);
-//   Serial.println("SD initialization Done.");
-// }
+  if (!SD.begin(MICRO_SD_CS)) {
+    Serial.println(F("initialization failed!"));
+    while (1);
+  }
+  filename = "log" + String(bootup_counter) + ".dat";
+  Serial.println(filename);
+  myFile = SD.open(filename, FILE_WRITE);
+  myFile.close();
+  Serial.println(F("SD initialization Done."));
+}
 
 void readGPS() {
   bool newData = false;
@@ -310,7 +325,7 @@ void readGPS() {
 
   if (Serial.available()) {
       char c = Serial.read();
-      // Serial.write(c); // uncomment this line if you want to see the GPS data flowing
+      Serial.write(c); // uncomment this line if you want to see the GPS data flowing
       if (gps.encode(c)) // Did a new valid sentence come in?
         newData = true;
   }
@@ -336,33 +351,35 @@ void readGPS() {
 
 void sendToPC(State* pData) {
   Serial.print((float)currTime5HzCounter / 1000.0);
-  Serial.print(" sec, ");
+  Serial.print(F(" sec, "));
 
-  Serial.print(" RPY: ");
+  Serial.print(F(" RPY: "));
   Serial.print(pData->roll_deg);
-  Serial.print(" deg, ");
+  Serial.print(F(" deg, "));
   Serial.print(pData->pitch_deg);
-  Serial.print(" deg, ");
+  Serial.print(F(" deg, "));
 
-  Serial.print(" GPS: ");
+  Serial.print(F(" GPS: "));
   Serial.print(pData->latitude_deg);
-  Serial.print(" deg, ");
+  Serial.print(F(" deg, "));
   Serial.print(pData->longitude_deg);
-  Serial.print(" deg, ");
+  Serial.print(F(" deg, "));
 
-  Serial.print(" Atm: ");
+  Serial.print(F(" Atm: "));
   Serial.print(pData->ambient_pressure_hpa);
-  Serial.print(" hpa, ");
+  Serial.print(F(" hpa, "));
 
-  Serial.print("ServoPos: ");
+  Serial.print(F("ServoPos: "));
   Serial.print(pData->servo_triggered);
   
   Serial.println();
 }
 
-// void saveToSD(State* pData) {
-//   myFile.write((const uint8_t*)pData, sizeof(State));
-// }
+void saveToSD(State* pData) {
+  myFile = SD.open(filename, FILE_WRITE);
+  myFile.write((const uint8_t*)pData, sizeof(State));
+  myFile.close();
+}
 
 bool isAttitudeConditionSatisfied() {
   if (abs(KalmanAnglePitch) >= 50) return true;
