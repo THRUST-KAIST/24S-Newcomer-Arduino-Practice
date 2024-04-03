@@ -127,8 +127,9 @@ void setup() {
   // Serial.begin(115200);
   //Serial.println("test");
   // update boot up counter
-  uint8_t bootup_counter = EEPROM.read(BOOTUP_COUNTER_ADDR);
-  EEPROM.update(BOOTUP_COUNTER_ADDR, bootup_counter+1);
+  uint16_t bootup_counter;
+  EEPROM.get(BOOTUP_COUNTER_ADDR, bootup_counter);
+  EEPROM.put(BOOTUP_COUNTER_ADDR, bootup_counter+1);
   testSerialCommunication();
   //Serial.println(bootup_counter);
   initializeIMU(&RateCalibrationRoll, &RateCalibrationPitch);
@@ -301,7 +302,7 @@ void initializeServo() {
   Serial.println(F("Servo initialization Done!"));
 }
 
-void initializeSD(uint8_t bootup_counter) {
+void initializeSD(uint16_t bootup_counter) {
   Serial.print(F("Initializing SD card..."));
 
   if (!SD.begin(MICRO_SD_CS)) {
@@ -325,7 +326,7 @@ void readGPS() {
 
   if (Serial.available()) {
       char c = Serial.read();
-      Serial.write(c); // uncomment this line if you want to see the GPS data flowing
+      // Serial.write(c); // uncomment this line if you want to see the GPS data flowing
       if (gps.encode(c)) // Did a new valid sentence come in?
         newData = true;
   }
